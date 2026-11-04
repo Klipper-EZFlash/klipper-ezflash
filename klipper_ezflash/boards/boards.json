@@ -256,8 +256,8 @@
         "SKR Pico": {
           "documentation": "https://global.bttwiki.com/SKR%20Pico.html",
           "instructions": {
-            "bootrom_entry": "If the board does not have external DC power, install the USB power jumper for flashing. Install a jumper on the boot header and then press and release the reset button to place the board in bootrom mode.",
-            "post_bootloader": "Please remove the USB power jumper and boot jumper now."
+            "bootrom_entry": "If the board does not have external DC power, install the USB power jumper for flashing if not connected to external power. Install a jumper on the boot header and then press and release the reset button to place the board in bootrom mode.",
+            "post_bootloader": "Please remove the boot jumper now and press the reset button."
           },
           "mcu": {
             "architecture": "Raspberry Pi RP2040",
@@ -267,6 +267,10 @@
           "CAN_Bridge": {
             "can_tx": "gpio0",
             "can_rx": "gpio1"
+          },
+          "uart": {
+            "tx_pin": "gpio0",
+            "rx_pin": "gpio1"
           },
           "usb": {}
         }
