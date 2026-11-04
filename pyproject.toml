@@ -4,6 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = 'klipper-ezflash'
+requires-python = ">=3.10"
 authors = [
     {name = "Laikulo", email = "aaron@haun.guru"},
     {name = "TheRogueZeta", email = "idk@idk.invalid"}
