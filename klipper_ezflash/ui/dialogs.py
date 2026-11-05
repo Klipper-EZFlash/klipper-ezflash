@@ -20,6 +20,11 @@ from rich.text import Text
 
 from .theme import DIALOG_CSS
 
+# Returned by ChoiceDialog / ButtonChoiceDialog when the optional "home"
+# button (e.g. "Main menu") is pressed — distinct from None, which means
+# Back/Escape (step back one level).
+HOME_TAG = "__home__"
+
 
 def _mnemonic_label(label: str) -> Text:
     """Return `label` as Rich Text with its first alphanumeric character
@@ -201,12 +206,13 @@ class ChoiceDialog(_DialogActions, ModalScreen[Optional[str]]):
         Binding("escape", "cancel", "Cancel", show=False),
     ]
 
-    def __init__(self, choices: Sequence[tuple[str, str]], message: str = "", title: str = "", cancel_label: str = "Cancel") -> None:
+    def __init__(self, choices: Sequence[tuple[str, str]], message: str = "", title: str = "", cancel_label: str = "Cancel", home_label: Optional[str] = None) -> None:
         super().__init__()
         self._choices = list(choices)
         self._message = message
         self._title = title
         self._cancel_label = cancel_label
+        self._home_label = home_label
         # Type-ahead state: pressing a letter jumps to the next choice
         # whose label starts with it; pressing the same letter again
         # cycles to the next match after that, mirroring the classic
@@ -225,6 +231,8 @@ class ChoiceDialog(_DialogActions, ModalScreen[Optional[str]]):
             )
             with Horizontal(id="dialog-buttons"):
                 yield Button(_mnemonic_label(self._cancel_label), id="cancel")
+                if self._home_label:
+                    yield Button(_mnemonic_label(self._home_label), id="home")
 
     def on_mount(self) -> None:
         # Without this, the ListView never gains focus on open, so
@@ -271,6 +279,9 @@ class ChoiceDialog(_DialogActions, ModalScreen[Optional[str]]):
         self.dismiss(event.item.name)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "home":
+            self.dismiss(HOME_TAG)
+            return
         self.dismiss(None)
 
     def action_cancel(self) -> None:
@@ -299,12 +310,14 @@ class ButtonChoiceDialog(_DialogActions, ModalScreen[Optional[str]]):
         message: str = "",
         title: str = "",
         cancel_label: Optional[str] = None,
+        home_label: Optional[str] = None,
     ) -> None:
         super().__init__()
         self._choices = list(choices)
         self._message = message
         self._title = title
         self._cancel_label = cancel_label
+        self._home_label = home_label
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog-box"):
@@ -317,6 +330,8 @@ class ButtonChoiceDialog(_DialogActions, ModalScreen[Optional[str]]):
                     yield Button(_mnemonic_label(label), id=f"choice-{i}", variant="primary" if i == 0 else "default")
                 if self._cancel_label:
                     yield Button(_mnemonic_label(self._cancel_label), id="cancel")
+                if self._home_label:
+                    yield Button(_mnemonic_label(self._home_label), id="home")
 
     def on_mount(self) -> None:
         first = self.query("#dialog-buttons Button")
@@ -331,6 +346,9 @@ class ButtonChoiceDialog(_DialogActions, ModalScreen[Optional[str]]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
             self.dismiss(None)
+            return
+        if event.button.id == "home":
+            self.dismiss(HOME_TAG)
             return
         index = int(event.button.id.removeprefix("choice-"))
         self.dismiss(self._choices[index][0])
