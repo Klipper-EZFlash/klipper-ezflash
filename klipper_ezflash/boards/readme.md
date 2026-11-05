@@ -12,6 +12,10 @@ Fields for descriptiors:
 * CAN_Bridge (empty object/absent/null means not supported)
   * can_tx (pin_name)
   * can_rx (pin_name)
+* external_can_transceiver (optional boolean)
+  * true: the board exposes CAN pins but has no onboard CAN transceiver; one
+    must be wired up externally. Applies to both `can` and `CAN_Bridge`.
+  * absent/false: an onboard transceiver is assumed.
 * usb
   * "${PIN}/${PIN}"
 * uart

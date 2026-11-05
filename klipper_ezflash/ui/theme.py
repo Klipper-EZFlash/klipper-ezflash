@@ -22,6 +22,8 @@ _BTN_BG = "#2a2a2a"
 _BTN_HOVER = "#353535"
 _ERROR_BG = "#5c1f1f"
 _ERROR_TEXT = "#f4b4b4"
+_WARN = "#f5b83d"       # amber for must-read warnings (distinct from green accent / red error)
+_WARN_BG = "#3a2f12"    # dark amber tint behind warnings
 
 DIALOG_CSS = f"""
 ModalScreen {{
@@ -56,6 +58,14 @@ ModalScreen {{
 }}
 #dialog-body {{
     margin-bottom: 1;
+}}
+#dialog-warning {{
+    margin-bottom: 1;
+    padding: 0 1;
+    background: {_WARN_BG};
+    color: {_WARN};
+    border-left: thick {_WARN};
+    text-style: bold;
 }}
 #dialog-buttons {{
     height: auto;

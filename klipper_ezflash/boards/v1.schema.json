@@ -32,6 +32,9 @@
             "documentation": {
               "type": "string"
             },
+            "external_can_transceiver": {
+              "type": "boolean"
+            },
             "mcu": {
               "type": "object",
               "properties": {

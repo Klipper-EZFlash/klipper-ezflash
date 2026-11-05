@@ -93,8 +93,8 @@ class EZFlashApp(FlashFlowMixin, App):
     async def menu(self, choices: Sequence[tuple[str, str]], message: str = "", title: str = "", cancel_label: str = "Cancel", home_label: Optional[str] = None) -> Optional[str]:
         return await self.push_screen_wait(ChoiceDialog(choices, message, title, cancel_label, home_label))
 
-    async def button_menu(self, choices: Sequence[tuple[str, str]], message: str = "", title: str = "", cancel_label: Optional[str] = None, home_label: Optional[str] = None) -> Optional[str]:
-        return await self.push_screen_wait(ButtonChoiceDialog(choices, message, title, cancel_label, home_label))
+    async def button_menu(self, choices: Sequence[tuple[str, str]], message: str = "", title: str = "", cancel_label: Optional[str] = None, home_label: Optional[str] = None, warning: str = "") -> Optional[str]:
+        return await self.push_screen_wait(ButtonChoiceDialog(choices, message, title, cancel_label, home_label, warning))
 
     async def inputbox(self, prompt: str, initial: str = "", title: str = "") -> Optional[str]:
         return await self.push_screen_wait(InputDialog(prompt, initial, title))
@@ -309,6 +309,12 @@ class EZFlashApp(FlashFlowMixin, App):
                     speed_line = f"\nCAN bit rate: {InterfaceSettings().can_speed} bps"
                 elif chosen_if_type and chosen_if_type == "UART":
                     speed_line = f"\nUART baud rate: {InterfaceSettings().uart_baudrate} baud"
+                warning = ""
+                if board.external_can_transceiver and chosen_if_type in ("CAN", "USB to CAN Bridge"):
+                    warning = (
+                        "WARNING: This board has no onboard CAN transceiver. "
+                        "An external CAN transceiver must be connected for CAN to work."
+                    )
                 summary = f"{board.pretty()}\nSelected interface: {iface_label}{speed_line}\n"
                 tag = await self.button_menu(
                     choices=[("begin", "Confirm and start flash")],
@@ -316,6 +322,7 @@ class EZFlashApp(FlashFlowMixin, App):
                     title="Confirm Board & Interface",
                     cancel_label="Back",
                     home_label="Main menu",
+                    warning=warning,
                 )
                 if tag == HOME_TAG:
                     return None
