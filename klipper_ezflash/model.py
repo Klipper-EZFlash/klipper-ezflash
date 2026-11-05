@@ -308,6 +308,7 @@ class BoardDefinition(object):
     klipper_options: Optional[Dict[str, str]] = None
     optional_features: Optional[List[str]] = None
     instructions: Optional[Dict[str, str]] = None
+    external_can_transceiver: bool = False
 
     def __str__(self):
         return f"{self.manufacturer}/{self.model}/{self.variant}"
@@ -411,6 +412,8 @@ class BoardDefinition(object):
             opts["optional_features"] = list(opt_features)
         if instructions := definition.get("instructions"):
             opts["instructions"] = dict(instructions)
+        if definition.get("external_can_transceiver"):
+            opts["external_can_transceiver"] = True
         return cls(**opts)
 
     @cached_property
@@ -435,6 +438,8 @@ class BoardDefinition(object):
         retstr += "  Interfaces:\n"
         for interface in self.interfaces:
             retstr += f"    {interface.pretty()}\n"
+        if self.external_can_transceiver:
+            retstr += "  CAN transceiver: external (not included on board)\n"
         if self.status is not None:
             retstr += f"  Status LED on {self.status}\n"
         else:

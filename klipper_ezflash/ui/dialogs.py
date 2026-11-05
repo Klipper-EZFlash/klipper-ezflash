@@ -311,6 +311,7 @@ class ButtonChoiceDialog(_DialogActions, ModalScreen[Optional[str]]):
         title: str = "",
         cancel_label: Optional[str] = None,
         home_label: Optional[str] = None,
+        warning: str = "",
     ) -> None:
         super().__init__()
         self._choices = list(choices)
@@ -318,6 +319,7 @@ class ButtonChoiceDialog(_DialogActions, ModalScreen[Optional[str]]):
         self._title = title
         self._cancel_label = cancel_label
         self._home_label = home_label
+        self._warning = warning
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog-box"):
@@ -325,6 +327,8 @@ class ButtonChoiceDialog(_DialogActions, ModalScreen[Optional[str]]):
                 yield Label(self._title, id="dialog-title")
             if self._message:
                 yield Static(self._message, id="dialog-body")
+            if self._warning:
+                yield Static(self._warning, id="dialog-warning", markup=False)
             with Horizontal(id="dialog-buttons"):
                 for i, (tag, label) in enumerate(self._choices):
                     yield Button(_mnemonic_label(label), id=f"choice-{i}", variant="primary" if i == 0 else "default")
