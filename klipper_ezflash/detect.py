@@ -61,11 +61,20 @@ class _DirectoryChangeWaiter(FileSystemEventHandler):
         self.changed.set()
 
 
-def _wait_until(condition_fn: Callable[[], bool], timeout: float) -> bool:
+def _wait_until(
+    condition_fn: Callable[[], bool],
+    timeout: float,
+    cancel: Optional[threading.Event] = None,
+) -> bool:
     """Block until `condition_fn()` returns True, or `timeout` elapses.
     Re-checks immediately, then again on every /dev/serial/by-id change
     (via inotify) or timeout, always by calling `condition_fn()` directly
     rather than trusting the watcher's own bookkeeping.
+
+    If `cancel` is given and gets set (the user quit), raises
+    EZFException("Cancelled") within ~0.25s. The inotify wait is sliced
+    into short waits because a thread can only block on one Event at a
+    time (the watcher's own).
     """
     base = Path("/dev/serial/by-id")
     if condition_fn():
@@ -75,6 +84,8 @@ def _wait_until(condition_fn: Callable[[], bool], timeout: float) -> bool:
 
     if not base.exists():
         while time.monotonic() < deadline and not base.exists():
+            if cancel is not None and cancel.is_set():
+                raise EZFException("Cancelled")
             time.sleep(0.05)
         if not base.exists():
             return False
@@ -85,19 +96,25 @@ def _wait_until(condition_fn: Callable[[], bool], timeout: float) -> bool:
     observer.start()
     try:
         while True:
+            if cancel is not None and cancel.is_set():
+                raise EZFException("Cancelled")
             if condition_fn():
                 return True
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return condition_fn()
-            handler.changed.wait(remaining)
+            handler.changed.wait(min(remaining, 0.25) if cancel is not None else remaining)
             handler.changed.clear()
     finally:
         observer.stop()
         observer.join()
 
 
-def wait_for_serial_device(predicate: Callable[[Path], bool], timeout: float = 5.0) -> Optional[Path]:
+def wait_for_serial_device(
+    predicate: Callable[[Path], bool],
+    timeout: float = 5.0,
+    cancel: Optional[threading.Event] = None,
+) -> Optional[Path]:
     """Block until exactly one /dev/serial/by-id entry matching
     `predicate` appears (or already exists), or until `timeout` elapses.
     Returns the matching Path, or None on timeout.
@@ -124,13 +141,14 @@ def wait_for_serial_device(predicate: Callable[[Path], bool], timeout: float = 5
             return True
         return False
 
-    return result.get("value") if _wait_until(condition, timeout=timeout) else None
+    return result.get("value") if _wait_until(condition, timeout=timeout, cancel=cancel) else None
 
 
 def wait_for_new_serial_device(
     predicate: Callable[[Path], bool],
     known: Iterable[Path],
     timeout: float = 5.0,
+    cancel: Optional[threading.Event] = None,
 ) -> Optional[Path]:
     """Wait for a device matching `predicate` that is NOT already present
     in `known` (a snapshot taken before the flash was triggered).
@@ -145,12 +163,14 @@ def wait_for_new_serial_device(
     return wait_for_serial_device(
         lambda p: predicate(p) and p not in known_set,
         timeout=timeout,
+        cancel=cancel,
     )
 
 
 def wait_for_katapult_device(
     known: Optional[Iterable[Path]] = None,
     timeout: float = 5.0,
+    cancel: Optional[threading.Event] = None,
 ) -> Optional[Path]:
     """Wait for the board to re-enumerate into katapult mode after
     flashing the bootloader.
@@ -167,13 +187,14 @@ def wait_for_katapult_device(
     """
     predicate = lambda p: "katapult_" in p.name
     if known is not None:
-        return wait_for_new_serial_device(predicate, known, timeout=timeout)
-    return wait_for_serial_device(predicate, timeout=timeout)
+        return wait_for_new_serial_device(predicate, known, timeout=timeout, cancel=cancel)
+    return wait_for_serial_device(predicate, timeout=timeout, cancel=cancel)
 
 
 def wait_for_klipper_device(
     known: Optional[Iterable[Path]] = None,
     timeout: float = 5.0,
+    cancel: Optional[threading.Event] = None,
 ) -> Optional[Path]:
     """Wait for a Klipper USB serial device.
 
@@ -185,8 +206,8 @@ def wait_for_klipper_device(
     """
     predicate = lambda p: "Klipper_" in p.name
     if known is not None:
-        return wait_for_new_serial_device(predicate, known, timeout=timeout)
-    return wait_for_serial_device(predicate, timeout=timeout)
+        return wait_for_new_serial_device(predicate, known, timeout=timeout, cancel=cancel)
+    return wait_for_serial_device(predicate, timeout=timeout, cancel=cancel)
 
 def list_serial_ports() -> List[Path]:
     """Return every serial device currently present, for the user to
@@ -456,7 +477,11 @@ def list_can_interfaces() -> List[str]:
     return sorted(out)
 
 
-def wait_for_new_can_interface(known: Iterable[str], timeout: float = 15.0) -> Optional[str]:
+def wait_for_new_can_interface(
+    known: Iterable[str],
+    timeout: float = 15.0,
+    cancel: Optional[threading.Event] = None,
+) -> Optional[str]:
     """Poll for a CAN network interface that is not already present in
     `known` (a snapshot taken before the flash was triggered).
 
@@ -477,7 +502,10 @@ def wait_for_new_can_interface(known: Iterable[str], timeout: float = 15.0) -> O
     """
     known_set = set(known)
     deadline = time.monotonic() + timeout
+    sleeper = cancel if cancel is not None else threading.Event()
     while True:
+        if cancel is not None and cancel.is_set():
+            raise EZFException("Cancelled")
         current = list_can_interfaces()
         new = [c for c in current if c not in known_set]
         if len(new) > 1:
@@ -491,7 +519,7 @@ def wait_for_new_can_interface(known: Iterable[str], timeout: float = 15.0) -> O
             return new[0]
         if time.monotonic() >= deadline:
             return None
-        time.sleep(0.5)
+        sleeper.wait(0.5)
 
 
 def wait_for_can_uuid(
@@ -500,6 +528,7 @@ def wait_for_can_uuid(
     katapult_path: Optional[Path] = None,
     timeout: float = 30.0,
     query_timeout: float = 8.0,
+    cancel: Optional[threading.Event] = None,
 ) -> Optional[Tuple[str, str]]:
     """Poll a CAN interface for a device reporting the given firmware type
     ("katapult" or "klipper"), ignoring any other-typed entries entirely.
@@ -531,6 +560,8 @@ def wait_for_can_uuid(
     """
     deadline = time.monotonic() + timeout
     while True:
+        if cancel is not None and cancel.is_set():
+            raise EZFException("Cancelled")
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return None

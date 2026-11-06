@@ -15,6 +15,7 @@ import io
 import logging
 import shlex
 import tempfile
+import threading
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -302,6 +303,12 @@ class FlashFlowScreen(Screen):
     def __init__(self, step_names: list[str]) -> None:
         super().__init__()
         self.step_list = StepList(step_names)
+        # Set by action_request_quit() so blocking waits running in worker
+        # threads (asyncio.to_thread) can bail out immediately. A thread
+        # can't be cancelled from outside, and the default executor is
+        # joined at shutdown, so without this, quitting mid-wait leaves the
+        # shell prompt blocked until that wait's own timeout expires.
+        self.cancel_event = threading.Event()
         # NOTE: can't call this `self.log` — Textual's Widget/DOMNode base
         # class already defines a read-only `log` property (the per-widget
         # logger, e.g. `self.log.info(...)`), so assigning to it raises
@@ -337,6 +344,7 @@ class FlashFlowScreen(Screen):
         # abort mid-compile). The flash/compile steps are fast enough
         # that a confirmation isn't worth the risk of crashing the exit
         # path itself — just quit immediately.
+        self.cancel_event.set()
         self.app.exit()
 
     def on_unmount(self) -> None:

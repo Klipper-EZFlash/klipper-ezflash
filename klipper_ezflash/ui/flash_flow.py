@@ -138,7 +138,7 @@ class FlashFlowMixin:
                 pass
             return
 
-        if not await self.stop_services_for_flash():
+        if not await self.stop_services_for_flash(session):
             return
 
         screen = FlashFlowScreen(self.FLASH_STEP_NAMES)
@@ -336,7 +336,8 @@ class FlashFlowMixin:
                                 f"{bootloader_hint}\n\nWaiting for a bootloader device to be detected...",
                             )
                             first_dev = await asyncio.to_thread(
-                                device_mod.wait_for_bootloader_device, session.mcu_arch
+                                device_mod.wait_for_bootloader_device, session.mcu_arch,
+                                cancel=screen.cancel_event,
                             )
                             screen.write(
                                 f"Bootloader device detected: {first_dev.get('raw', '<unknown>')} — confirming it's stable..."
@@ -353,7 +354,8 @@ class FlashFlowMixin:
                         # already present but about to disappear/re-enumerate),
                         # rather than trusting either check above on its own.
                         stable_dev = await asyncio.to_thread(
-                            device_mod.confirm_bootloader_stable, session.mcu_arch, first_dev
+                            device_mod.confirm_bootloader_stable, session.mcu_arch, first_dev,
+                            cancel=screen.cancel_event,
                         )
                         session.detected_devices.append(stable_dev)
                         save_session(session)
@@ -507,7 +509,8 @@ class FlashFlowMixin:
 
                             screen.write(f"Waiting for a katapult-mode device on {chosen_can}....")
                             result = await asyncio.to_thread(
-                                detect_mod.wait_for_can_uuid, chosen_can, want_type="katapult", timeout=30.0
+                                detect_mod.wait_for_can_uuid, chosen_can, want_type="katapult", timeout=30.0,
+                                cancel=screen.cancel_event,
                             )
                             if not result:
                                 raise EZFException(
@@ -614,7 +617,8 @@ class FlashFlowMixin:
                             if not firmware_flashed:
                                 screen.write("Waiting for the device to reboot into Katapult....")
                                 katapult_dev = await asyncio.to_thread(
-                                    detect_mod.wait_for_katapult_device, known=known_katapult_devs, timeout=10.0
+                                    detect_mod.wait_for_katapult_device, known=known_katapult_devs, timeout=10.0,
+                                    cancel=screen.cancel_event,
                                 )
                                 if not katapult_dev:
                                     raise EZFException(
@@ -653,7 +657,8 @@ class FlashFlowMixin:
                                 if detected_can_iface is None:
                                     screen.write("Waiting for the board to reboot as a CAN-bridge network interface...")
                                     detected_can_iface = await asyncio.to_thread(
-                                        detect_mod.wait_for_new_can_interface, known=known_can_ifaces, timeout=15.0
+                                        detect_mod.wait_for_new_can_interface, known=known_can_ifaces, timeout=15.0,
+                                        cancel=screen.cancel_event,
                                     )
                                     if not detected_can_iface:
                                         raise EZFException(
@@ -664,7 +669,8 @@ class FlashFlowMixin:
                                 screen.write(f"Waiting for the flashed firmware to appear as a klipper-mode CAN device on {detected_can_iface}....")
                                 try:
                                     result = await asyncio.to_thread(
-                                        detect_mod.wait_for_can_uuid, detected_can_iface, want_type="klipper", timeout=30.0
+                                        detect_mod.wait_for_can_uuid, detected_can_iface, want_type="klipper", timeout=30.0,
+                                        cancel=screen.cancel_event,
                                     )
                                 except AmbiguousCanUuidException as e:
                                     screen.write(
@@ -692,7 +698,10 @@ class FlashFlowMixin:
                                 screen.write(f"Detected klipper-mode CAN-bridge device: UUID {can_uid} on {detected_can_iface}")
                             else:
                                 screen.write("Waiting for the device to reboot and reappear as a Klipper device....")
-                                klipper_dev = await asyncio.to_thread(detect_mod.wait_for_klipper_device, known=known_klipper_devs, timeout=10.0)
+                                klipper_dev = await asyncio.to_thread(
+                                    detect_mod.wait_for_klipper_device, known=known_klipper_devs, timeout=10.0,
+                                    cancel=screen.cancel_event,
+                                )
                                 if not klipper_dev:
                                     raise EZFException("No Klipper device detected after flashing.\n\nPlease check the connection.")
                                 klipper_path = str(klipper_dev)
@@ -762,6 +771,11 @@ class FlashFlowMixin:
                     return
 
                 except Exception as e:
+                    if screen.cancel_event.is_set():
+                        # User quit mid-wait; a worker thread raised
+                        # "Cancelled". Don't offer Retry/Abort on an app
+                        # that is already exiting.
+                        return
                     for i in range(len(self.FLASH_STEP_NAMES)):
                         # mark the step that failed (best-effort — whichever is ACTIVE)
                         if screen.step_list.status(i) == StepStatus.ACTIVE:
@@ -783,7 +797,7 @@ class FlashFlowMixin:
         finally:
             self.pop_screen()
 
-    async def stop_services_for_flash(self) -> bool:
+    async def stop_services_for_flash(self, session: SessionData) -> bool:
         """Offer to stop Klipper before touching any hardware for this 
         flash — called right before the flash screen is created, the
         common point for both a fresh flash (just confirmed via "Begin
@@ -803,8 +817,13 @@ class FlashFlowMixin:
         Returns True if it's fine to proceed (services stopped, none were
         running, or already stopped earlier this run), False if the user
         cancelled or stopping them failed.
+
+        The stop/skip choice is stored in session.extra["services_action"]
+        so a resumed session (e.g. after a host shutdown to rewire a
+        board) repeats the same action without asking again.
         """
         if self._stopped_services:
+            self._remember_services_action(session, "stop")
             return True
         active = [
             name for name in ("klipper",)
@@ -812,6 +831,13 @@ class FlashFlowMixin:
         ]
         if not active:
             return True
+
+        saved = session.extra.get("services_action")
+        if saved == "skip":
+            return True
+        if saved == "stop":
+            return await self._stop_active_services(active, session)
+
         proceed = await self.button_menu(
             choices=[
                 ("stop", "Stop service(s) and flash"),
@@ -830,18 +856,33 @@ class FlashFlowMixin:
             title="Warning",
         )
         if proceed == "skip":
+            self._remember_services_action(session, "skip")
             return True
         if proceed != "stop":
             return False
+        return await self._stop_active_services(active, session)
+
+    async def _stop_active_services(self, active: list[str], session: SessionData) -> bool:
         try:
             with self.suspend():
                 print("\nStopping service(s) — you may be prompted for your sudo password below.\n")
                 stopped = stop_services(active)
             self._stopped_services.extend(stopped)
+            self._remember_services_action(session, "stop")
             return True
         except Exception as e:
             await self.msgbox(f"Failed to stop service(s):\n\n{e}", title="Error")
             return False
+
+    @staticmethod
+    def _remember_services_action(session: SessionData, action: str) -> None:
+        if session.extra.get("services_action") == action:
+            return
+        session.extra["services_action"] = action
+        try:
+            save_session(session)
+        except Exception:
+            pass  # best-effort; worst case the resume prompts again
 
     async def resolve_can_ambiguity(
         self, candidates: list[tuple[str, str]], board, interface: str, klipper_path: Path
