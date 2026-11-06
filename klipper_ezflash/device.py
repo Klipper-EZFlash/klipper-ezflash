@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -126,7 +127,9 @@ def check_bootloader_already_present(mcu_arch: str) -> Optional[Dict[str, Any]]:
     return matching[0] if matching else None
 
 
-def wait_for_bootloader_device(mcu_arch: str, timeout: int = 30) -> Dict[str, Any]:
+def wait_for_bootloader_device(
+    mcu_arch: str, timeout: int = 30, cancel: Optional[threading.Event] = None
+) -> Dict[str, Any]:
     """Poll until exactly one bootloader device matching `mcu_arch` first
     appears, returning its info dict as soon as it's seen — no settle/
     recheck delay here, that's confirm_bootloader_stable()'s job. Split
@@ -139,10 +142,17 @@ def wait_for_bootloader_device(mcu_arch: str, timeout: int = 30) -> Dict[str, An
     or if more than one matching device is present at once (see
     _ambiguous_error) — both are hard stops, same as
     verify_bootloader_connected.
+
+    If `cancel` is given and gets set (the user quit), raises
+    EZFException("Cancelled") right away instead of polling out the
+    remaining timeout.
     """
     deadline = time.time() + timeout
     last_other: List[Dict[str, Any]] = []
+    sleeper = cancel if cancel is not None else threading.Event()
     while time.time() < deadline:
+        if cancel is not None and cancel.is_set():
+            raise EZFException("Cancelled")
         devices = scan_hardware_bootloader_devices()
         matching, other = _matching_and_other(devices, mcu_arch)
         if other:
@@ -151,7 +161,7 @@ def wait_for_bootloader_device(mcu_arch: str, timeout: int = 30) -> Dict[str, An
             raise _ambiguous_error(matching, mcu_arch)
         if matching:
             return matching[0]
-        time.sleep(1)
+        sleeper.wait(1)
 
     if last_other:
         raw_list = "\n".join(f"  - {d['raw']}" for d in last_other)
@@ -163,7 +173,12 @@ def wait_for_bootloader_device(mcu_arch: str, timeout: int = 30) -> Dict[str, An
     raise EZFException(f"No bootloader device detected for MCU '{mcu_arch}' within {timeout}s")
 
 
-def confirm_bootloader_stable(mcu_arch: str, first_seen: Dict[str, Any], settle_time: float = 1.5) -> Dict[str, Any]:
+def confirm_bootloader_stable(
+    mcu_arch: str,
+    first_seen: Dict[str, Any],
+    settle_time: float = 1.5,
+    cancel: Optional[threading.Event] = None,
+) -> Dict[str, Any]:
     """Given a device already seen by wait_for_bootloader_device() (or an
     already-present one from check_bootloader_already_present()), wait
     `settle_time` and recheck that it's still the sole matching device —
@@ -173,7 +188,11 @@ def confirm_bootloader_stable(mcu_arch: str, first_seen: Dict[str, Any], settle_
     settle window, or if the original device is no longer present (cable
     wiggled loose, or it re-enumerated as something else).
     """
-    time.sleep(settle_time)
+    if cancel is not None:
+        if cancel.wait(settle_time):
+            raise EZFException("Cancelled")
+    else:
+        time.sleep(settle_time)
     devices2 = scan_hardware_bootloader_devices()
     matching2, other2 = _matching_and_other(devices2, mcu_arch)
     if len(matching2) > 1:
