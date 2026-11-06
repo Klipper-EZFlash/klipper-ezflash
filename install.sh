@@ -280,7 +280,7 @@ main() {
   else
     step "Cloning EZFlash source"
     log "Cloning new repo"
-    git clone -v https://github.com/laikulo/klipper-ezflash.git -b main "$repodir" |& log_tee git
+    git clone -v https://github.com/Klipper-EZFlash/klipper-ezflash.git -b main "$repodir" |& log_tee git
   fi
 
   step "Installing EZFlash"
