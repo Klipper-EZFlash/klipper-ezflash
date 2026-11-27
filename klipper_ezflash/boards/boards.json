@@ -69,7 +69,9 @@
             "can_rx": "PD0",
             "can_tx": "PD1"
           },
-          "usb": "PA11/PA12"
+          "usb": "PA11/PA12",
+          "status": "!PC14",
+          "startup_pins": "PC14"
         }
       },
       "Manta M8P": {
