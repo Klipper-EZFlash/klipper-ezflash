@@ -24,6 +24,10 @@ def main():
         for target in ((Configurator.klipper, klipper_path), (Configurator.katapult, katapult_path)):
             try:
                 config = target[0](target[1], board=board)
+                if target[0] == Configurator.katapult and board.bootloader_pins:
+                    sym = config.kconfig.symbol(prompt="GPIO pins to set on bootloader entry")
+                    if sym is None or sym.get_board() != board.bootloader_pins:
+                        failures.append(f"{board} Katapult: bootloader_pins not applied")
 
                 for i in config.get_interfaces():
                     # CAN bridge is Klipper-only

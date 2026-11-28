@@ -153,6 +153,9 @@
             "startup_pins": {
               "type": "string"
             },
+            "bootloader_pins": {
+              "type": "string"
+            },
             "uart": {
               "oneOf": [
                 {

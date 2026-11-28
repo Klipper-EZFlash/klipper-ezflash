@@ -20,6 +20,12 @@ Fields for descriptiors:
   * "${PIN}/${PIN}"
 * uart
 * status (pin_name)
+* bootloader_pins (optional pin spec)
+  * Pins Katapult drives on bootloader entry (Katapult's "GPIO pins to set on
+    bootloader entry").
+* startup_pins (optional pin spec)
+  * Pins Klipper drives at MCU startup (Klipper's "GPIO pins to set at
+    micro-controller startup").
 * klipper_options
   * serial_number - str
   * ... (per target)

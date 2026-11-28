@@ -305,6 +305,7 @@ class BoardDefinition(object):
     uart: Optional["BoardUARTDefinition"] = None
     status: Optional[str] = None
     startup_pins: Optional[str] = None
+    bootloader_pins: Optional[str] = None
     klipper_options: Optional[Dict[str, str]] = None
     optional_features: Optional[List[str]] = None
     instructions: Optional[Dict[str, str]] = None
@@ -406,6 +407,8 @@ class BoardDefinition(object):
             opts["status"] = status
         if (startup_pins := definition.get("startup_pins")) is not None:
             opts["startup_pins"] = startup_pins
+        if (bootloader_pins := definition.get("bootloader_pins")) is not None:
+            opts["bootloader_pins"] = bootloader_pins
         if klipper_opts := definition.get("klipper_options"):
             opts["klipper_options"] = dict(klipper_opts)
         if (opt_features := definition.get("optional_features")) is not None:
@@ -449,6 +452,9 @@ class BoardDefinition(object):
             retstr += f"  Pins to set on startup: {self.startup_pins}\n"
         else:
             retstr += "  No startup pins\n"
+
+        if self.bootloader_pins is not None:
+            retstr += f"  Pins to set on bootloader entry: {self.bootloader_pins}\n"
 
         if self.optional_features:
             retstr += f"  Optional features: {', '.join(self.optional_features)}\n"
