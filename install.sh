@@ -244,7 +244,7 @@ main() {
   step "Checking Python version"
   check_python_version
 
-  basedir="$HOME/.ezf"
+  basedir="$HOME/.ezflash"
   if [[ -d $basedir ]]; then
     log "Basedir already exists"
     echo ""
