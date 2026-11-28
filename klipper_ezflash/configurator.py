@@ -111,6 +111,8 @@ class Configurator(object):
         if self._target == ConfiguratorTarget.KATAPULT:
             if board.status is not None:
                 self.set_status_leds(board.status)
+            if board.bootloader_pins is not None:
+                self.set_bootloader_pins(board.bootloader_pins)
         if self._target == ConfiguratorTarget.KLIPPER:
             if board.startup_pins is not None:
                 self.set_startup_pins(board.startup_pins)
@@ -131,6 +133,19 @@ class Configurator(object):
             raise ValueError("Startup pins are only supported for Klipper")
         self.kconfig.symbol(prompt="GPIO pins to set at micro-controller startup").set(gpio_spec)
         self._log_selection("Startup pins", gpio_spec)
+
+    def set_bootloader_pins(self, gpio_spec: str):
+        if self._target != ConfiguratorTarget.KATAPULT:
+            raise ValueError("Bootloader pins are only supported for Katapult")
+        sym = self.kconfig.symbol(prompt="GPIO pins to set on bootloader entry")
+        if sym is None:
+            raise RuntimeError(
+                f"{self._board} needs bootloader pins ({gpio_spec}), but this Katapult "
+                "checkout has no 'GPIO pins to set on bootloader entry' option. "
+                "Update Katapult and try again."
+            )
+        sym.set(gpio_spec)
+        self._log_selection("Bootloader pins", gpio_spec)
 
     def set_arch(self, arch):
         # Despite what the below says, we have to deal with differing titles for some arches
