@@ -6,10 +6,14 @@ plus App itself.
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 import traceback
 from pathlib import Path
 from typing import Optional, Sequence
 
+from rich.style import Style
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header, LoadingIndicator
@@ -19,9 +23,21 @@ from ..settings import InterfaceSettings
 from ..util import find_katapult, _KATAPULT_CLONE_URL, check_can_host_state, fix_can_host_state, check_uart_host_state, fix_uart_host_state, reboot_host, start_services, update_katapult, clone_katapult as _clone_katapult_repo
 from ..session import load_session, clear_session
 from .. import detect as detect_mod
+from .. import updatecheck
 from .theme import _BG, _PANEL, _TEXT, _ACCENT
 from .dialogs import MessageDialog, ConfirmDialog, ChoiceDialog, ButtonChoiceDialog, InputDialog, HOME_TAG
 from .flash_flow import FlashFlowMixin
+
+
+def _changes_text(info: updatecheck.UpdateInfo) -> Text:
+    """The changelog link: a short terminal hyperlink (OSC 8, clickable in
+    terminals that support it) followed by the plain URL, for copy/paste or
+    terminals that auto-detect URLs."""
+    text = Text()
+    text.append("View changes on GitHub", style=Style(link=info.changes_url, underline=True))
+    text.append("\n")
+    text.append(info.changes_url)
+    return text
 
 
 class EZFlashApp(FlashFlowMixin, App):
@@ -62,6 +78,12 @@ class EZFlashApp(FlashFlowMixin, App):
         # be needless churn (and would re-trigger the same disruption
         # we're trying to avoid by stopping them in the first place).
         self._stopped_services: list[str] = []
+        # Set in the background by _run_update_check() (or a manual check);
+        # read by menus() to offer "Update EZFlash now".
+        self._update_info: Optional[updatecheck.UpdateInfo] = None
+        # Set after a successful in-app update: menus() returns, the app
+        # exits, and main() re-execs so the new code is what runs.
+        self._restart_after_exit = False
 
     def compose(self) -> ComposeResult:
         yield Header(icon="")
@@ -98,6 +120,30 @@ class EZFlashApp(FlashFlowMixin, App):
 
     async def inputbox(self, prompt: str, initial: str = "", title: str = "") -> Optional[str]:
         return await self.push_screen_wait(InputDialog(prompt, initial, title))
+
+    # ---- update check ---------------------------------------------------
+
+    async def _run_update_check(self) -> None:
+        """Background startup check; failures are silent by design."""
+        try:
+            self._update_info = await asyncio.to_thread(updatecheck.check_for_update)
+        except Exception:
+            self._update_info = None
+
+    async def _update_now(self) -> None:
+        """Apply the pending update, then flag the app to relaunch itself.
+        Only ever called from the main menu, never mid-flash."""
+        info = self._update_info
+        if info is None:
+            return
+        self.notify("Updating EZFlash...", timeout=30)
+        error = await asyncio.to_thread(updatecheck.apply_update, info)
+        if error:
+            await self.msgbox(f"Update failed:\n\n{error}", title="Update failed")
+            return
+        self._update_info = None
+        self._restart_after_exit = True
+        self.exit()
 
     # ---- katapult checkout check / clone -----------------------------
 
@@ -480,6 +526,50 @@ class EZFlashApp(FlashFlowMixin, App):
             elif tag in ("back", None):
                 return
 
+    # ---- EZFlash settings menu ------------------------------------------
+
+    async def ezflash_settings_menu(self) -> None:
+        while True:
+            tag = await self.menu(
+                choices=[
+                    ("check", "Check for updates now"),
+                    (
+                        "startup",
+                        f"Check for updates on startup: {'on' if updatecheck.is_enabled() else 'off'}",
+                    ),
+                ],
+                title="EZFlash Settings",
+                cancel_label="Back",
+            )
+            if tag == "startup":
+                updatecheck.set_enabled(not updatecheck.is_enabled())
+            elif tag == "check":
+                status, found = await asyncio.to_thread(updatecheck.check_now)
+                if status == "update":
+                    self._update_info = found
+                    prompt = Text("An update is available.\nWhat changed: ")
+                    prompt.append_text(_changes_text(found))
+                    prompt.append("\n\nUpdate now? EZFlash will restart.")
+                    if await self.yesno(
+                        prompt,
+                        title="Update available",
+                        yes_label="Update",
+                        no_label="Later",
+                    ):
+                        await self._update_now()
+                        if self._restart_after_exit:
+                            return
+                elif status == "current":
+                    await self.msgbox("EZFlash is up to date.", title="Updates")
+                else:
+                    await self.msgbox(
+                        "Couldn't check for updates (offline, or this isn't an "
+                        "installer-managed install).",
+                        title="Updates",
+                    )
+            else:
+                return
+
     # ---- CAN host prep menu --------------------------------------------
 
     async def prepare_can_host_menu(self) -> None:
@@ -555,17 +645,28 @@ class EZFlashApp(FlashFlowMixin, App):
 
     async def menus(self) -> None:
         while True:
+            choices = [
+                ("flash", "Select a board"),
+                ("settings", "Edit the default communication settings"),
+                ("preparecan", "Prepare host OS for CAN"),
+                ("configureuart", "Configure host for hardware UART"),
+                ("ezflash_settings", "EZFlash settings"),
+                ("crash", "Intentionally crash"),
+                ("exit", "Exit"),
+            ]
+            message = Text("What would you like to do?")
+            info = self._update_info
+            if info is not None:
+                message.append(
+                    "\n\nAn update is available. To install it, choose "
+                    "EZFlash settings > Check for updates.\nWhat changed: "
+                )
+                message.append_text(_changes_text(info))
+                message.append("\n(You can turn off this update check in the EZFlash settings menu.)")
             tag = await self.menu(
-                choices=[
-                    ("flash", "Select a board"),
-                    ("settings", "Edit the default communication settings"),
-                    ("preparecan", "Prepare host OS for CAN"),
-                    ("configureuart", "Configure host for hardware UART"),
-                    ("crash", "Intentionally crash"),
-                    ("exit", "Exit"),
-                ],
+                choices=choices,
                 title="Main Menu",
-                message="What would you like to do?",
+                message=message,
                 cancel_label="Quit",
             )
             if tag is None or tag == "exit":
@@ -577,6 +678,10 @@ class EZFlashApp(FlashFlowMixin, App):
                 await self.prepare_can_host_menu()
             elif tag == "configureuart":
                 await self.configure_uart_host_menu()
+            elif tag == "ezflash_settings":
+                await self.ezflash_settings_menu()
+                if self._restart_after_exit:
+                    return
             elif tag == "flash":
                 try:
                     await self.start_flash_flow()
@@ -595,6 +700,7 @@ class EZFlashApp(FlashFlowMixin, App):
             # finished (or failed), which looked like they'd appeared at
             # the wrong time entirely.
             self._clear_startup_loading()
+            self._update_task = asyncio.create_task(self._run_update_check())
             proceed = await self.yesno(
                 "This is WIP tooling.\n\nIt may eat your cat and/or firmware\nBe warned!",
                 default_no=True,
@@ -724,6 +830,11 @@ def main() -> None:
         # sudo can prompt directly here without needing app.suspend().
         print(f"\nRestarting services: {', '.join(app._stopped_services)}")
         start_services(app._stopped_services)
+    if app._restart_after_exit:
+        # Relaunch with the same invocation so the freshly updated code is
+        # what runs (the old modules are still loaded in this process).
+        argv = getattr(sys, "orig_argv", None) or [sys.executable, *sys.argv]
+        os.execv(sys.executable, argv)
 
 
 if __name__ == "__main__":
